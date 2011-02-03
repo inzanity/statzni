@@ -1,10 +1,22 @@
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <stdlib.h>
 #include <stdio.h>
-#include <zlib.h>
-#include <bzlib.h>
 #include <glib.h>
 #include <string.h>
+
+#ifdef HAVE_ZLIB
+#include <zlib.h>
+#endif
+#ifdef HAVE_BZLIB
+#include <bzlib.h>
+#endif
+#ifdef HAVE_LZMA
 #include <lzma.h>
+#endif
+
 #include "io.h"
 #ifdef FORK_EXEC
 # include <signal.h>
@@ -30,6 +42,7 @@ struct io_module {
 
 #ifndef FORK_EXEC
 
+#ifdef HAVE_ZLIB
 static void *_gzopen(const char *path)
 {
 	return gzopen(path, "rb");
@@ -39,7 +52,9 @@ static void _gzseek(void *data, unsigned int pos)
 {
 	gzseek(data, pos, SEEK_CUR);
 }
+#endif
 
+#ifdef HAVE_BZLIB
 struct BzData
 {
 	FILE *file;
@@ -97,7 +112,9 @@ static int _bzeof(void *p)
 
 	return data->error == BZ_STREAM_END;
 }
+#endif
 
+#ifdef HAVE_LZMA
 struct LzmaData {
 	FILE *file;
 	lzma_stream strm;
@@ -200,6 +217,7 @@ static int _lzclose(void *data)
 
 	return 0;
 }
+#endif
 
 static void *_fopen(const char *path)
 {
@@ -217,10 +235,16 @@ static void _fseek(void *data, unsigned int pos)
 }
 
 static struct io_module modules[] = {
+#ifdef HAVE_ZLIB
 	{ ".gz", _gzopen, gzclose, gzread, gzeof, _gzseek },
+#endif
+#ifdef HAVE_BZLIB
 	{ ".bz2", _bzopen, _bzclose, _bzread, _bzeof, _bzseek },
+#endif
+#ifdef HAVE_LZMA
 	{ ".lzma", _lzopen, _lzclose, _lzread, _lzeof, _lzseek },
 	{ ".xz", _lzopen, _lzclose, _lzread, _lzeof, _lzseek },
+#endif
 	{ "", _fopen, (ioclose)fclose, _fread, (ioeof)feof, _fseek },
 };
 

@@ -2,25 +2,83 @@
 #include <string.h>
 #include "parser.h"
 
-static void *_noop_init() {
-	return NULL;
+struct IrssiParser {
+	unsigned int basetime;
+};
+
+static void *_irssi_init() {
+	struct IrssiParser *data = malloc(sizeof(struct IrssiParser));
+	data->basetime = 0;
+
+	return data;
 }
 
-static void _noop_deinit(void *data)
+static void _irssi_deinit(void *data)
 {
-	(void)data;
+	free(data);
+}
+
+static inline unsigned int _irssi_parse_month(const char *month)
+{
+	switch (*month) {
+	case 'F':
+		return 2;
+	case 'M':
+		return (month[1] && month[2] == 'y') ? 5 : 3;
+	case 'A':
+		return month[1] == 'u' ? 8 : 4;
+	case 'J':
+		return (month[1] == 'a' ? 1 : month[1] && month[2] == 'l') ? 7 : 6;
+	case 'S':
+		return 9;
+	case 'O':
+		return 10;
+	case 'N':
+		return 11;
+	case 'D':
+		return 12;
+	default:
+		return 0;
+	}
+}
+
+static inline unsigned int _irssi_parse_date(const char *date, int hastime)
+{
+	unsigned int rv = 0;
+	const char *spc = date;
+
+#define PROGRESS(x) x = strchr(x, ' '); if (!(x++) || !*x) return rv
+	PROGRESS(spc);
+	rv |= _irssi_parse_month(spc) << MONTH_SHIFT;
+
+	PROGRESS(spc);
+	rv |= atoi(spc) << DAY_SHIFT;
+
+	PROGRESS(spc);
+	if (hastime)
+		PROGRESS(spc);
+
+	rv |= atoi(spc) << YEAR_SHIFT;
+	
+	return rv;
+#undef PROGRESS
 }
 
 #define IGNIFNUL(x) while (!(x)) { details->type = ACTION_IGNORE; return; }
-static void _irssi_parse_line(void *data,
+static void _irssi_parse_line(void *pdata,
 			      struct action_details *details,
 			      char *line)
 {
+	struct IrssiParser *data = pdata;
 	char *spc;
 	char *enick;
 	(void)data;
 
 	if (*line == '-') {
+		spc = strstr(line, "opened ");
+		if (spc || strstr(line, "Day changed "))
+			data->basetime = _irssi_parse_date(line + 7,
+							   !!spc);
 		details->type = ACTION_IGNORE;
 		return; 
 	}
@@ -29,8 +87,8 @@ static void _irssi_parse_line(void *data,
 	IGNIFNUL(spc);
 
 	*spc = '\0';
-	details->time = (line[0] - '0') * 600 + (line[1] - '0') * 60 +
-		(line[3] - '0') * 10 + line[4] - '0';
+	details->time = ((line[0] - '0') * 10 + (line[1] - '0')) << HOUR_SHIFT |
+		((line[3] - '0') * 10 + line[4] - '0');
 	spc++;
 	if (*spc == '<') {
 		IGNIFNUL(*++spc);
@@ -94,7 +152,7 @@ struct {
 	const char *format;
 	struct parser funcs;
 } parsers[] = {
-	{ "irssi", { _noop_init, _irssi_parse_line, _noop_deinit } }
+	{ "irssi", { _irssi_init, _irssi_parse_line, _irssi_deinit } }
 };
 
 

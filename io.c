@@ -6,6 +6,12 @@
 #include <string.h>
 #include <lzma.h>
 #include "io.h"
+#ifdef FORK_EXEC
+# include <signal.h>
+# include <sys/wait.h>
+#endif
+
+#define BUFSIZE 2048
 
 typedef void *(*ioopen)(const char *path);
 typedef int (*ioclose)(void *data);
@@ -21,6 +27,8 @@ struct io_module {
 	ioeof eof;
 	ioseek seek;
 };
+
+#ifndef FORK_EXEC
 
 static void *_gzopen(const char *path)
 {
@@ -76,11 +84,11 @@ static int _bzread(void *p, void *buf, size_t len)
 static void _bzseek(void *p, unsigned int pos)
 {
 	struct BzData *data = p;
-	char buffer[2048];
+	char buffer[BUFSIZE];
 
 	while (pos && data->error != BZ_STREAM_END)
 		pos -= BZ2_bzRead(&data->error, data->bzFile,
-				  buffer, MIN(pos, 2048));
+				  buffer, MIN(pos, sizeof(buffer)));
 }
 
 static int _bzeof(void *p)
@@ -93,8 +101,8 @@ static int _bzeof(void *p)
 struct LzmaData {
 	FILE *file;
 	lzma_stream strm;
-	unsigned char bufin[2048];
-	unsigned char bufout[2048];
+	unsigned char bufin[BUFSIZE];
+	unsigned char bufout[BUFSIZE];
 };
 static lzma_stream lzma_stream_init = LZMA_STREAM_INIT;
 
@@ -107,7 +115,7 @@ static void *_lzopen(const char *path)
 
 	r = lzma_auto_decoder(&data->strm, -1, 0);
 
-	data->strm.avail_out = 2048;
+	data->strm.avail_out = sizeof(data->bufout);
 	data->strm.next_out = data->bufout;
 
 	return data;
@@ -118,9 +126,10 @@ static int _lzread(void *data, void *buf, size_t len)
 	struct LzmaData *lz = data;
 
 	for (;;) {
-		if (lz->strm.avail_out < 2048) {
-			if ((2048 - lz->strm.avail_out) < len)
-				len = (2048 - lz->strm.avail_out);
+		if (lz->strm.avail_out < sizeof(lz->bufout)) {
+			if ((sizeof(lz->bufout) - lz->strm.avail_out) < len)
+				len = (sizeof(lz->bufout) -
+				       lz->strm.avail_out);
 			memcpy(buf, lz->strm.next_out, len);
 			lz->strm.avail_out += len;
 			lz->strm.next_out += len;
@@ -131,7 +140,7 @@ static int _lzread(void *data, void *buf, size_t len)
 		if (lz->strm.avail_in) {
 			lzma_ret r;
 			lz->strm.next_out = lz->bufout;
-			lz->strm.avail_out = 2048;
+			lz->strm.avail_out = sizeof(lz->bufout);
 			r = lzma_code(&lz->strm, LZMA_RUN);
 			lz->strm.next_out = lz->bufout;
 			continue;
@@ -140,7 +149,8 @@ static int _lzread(void *data, void *buf, size_t len)
 		if (feof(lz->file))
 			return 0;
 
-		lz->strm.avail_in = fread(lz->bufin, 1, 2048, lz->file);
+		lz->strm.avail_in = fread(lz->bufin, 1, sizeof(lz->bufin),
+					  lz->file);
 		lz->strm.next_in = lz->bufin;
 	}
 }
@@ -150,13 +160,13 @@ static void _lzseek(void *data, unsigned int pos)
 	struct LzmaData *lz = data;
 	unsigned int r = 0;
 
-	for (; r + (2048 - lz->strm.avail_out) < pos;) {
-		r += 2048 - lz->strm.avail_out;
+	for (; r + (sizeof(lz->bufout) - lz->strm.avail_out) < pos;) {
+		r += sizeof(lz->bufout) - lz->strm.avail_out;
 
 		if (lz->strm.avail_in) {
 			lzma_ret r;
 			lz->strm.next_out = lz->bufout;
-			lz->strm.avail_out = 2048;
+			lz->strm.avail_out = sizeof(lz->bufout);
 			r = lzma_code(&lz->strm, LZMA_RUN);
 			lz->strm.next_out = lz->bufout;
 			continue;
@@ -165,7 +175,8 @@ static void _lzseek(void *data, unsigned int pos)
 		if (feof(lz->file))
 			return;
 
-		lz->strm.avail_in = fread(lz->bufin, 1, 2048, lz->file);
+		lz->strm.avail_in = fread(lz->bufin, 1, sizeof(lz->bufin),
+					  lz->file);
 		lz->strm.next_in = lz->bufin;
 	}
 
@@ -176,7 +187,7 @@ static void _lzseek(void *data, unsigned int pos)
 static int _lzeof(void *data)
 {
 	struct LzmaData *lz = data;
-	return lz->strm.avail_out == 2048 && !lz->strm.avail_in &&
+	return lz->strm.avail_out == sizeof(lz->bufout) && !lz->strm.avail_in &&
 		feof(lz->file);
 }
 
@@ -213,9 +224,113 @@ static struct io_module modules[] = {
 	{ "", _fopen, (ioclose)fclose, _fread, (ioeof)feof, _fseek },
 };
 
+#else
+
+static struct {
+	const char *suffix;
+	const char *program;
+} exec_programs[] = {
+	{ ".gz", "zcat" },
+	{ ".bz2", "bzcat" },
+	{ ".lzma", "lzcat" },
+	{ ".Z", "zcat" },
+	{ "", "cat" }
+};
+
+struct ExecData
+{
+	pid_t child;
+	int fd;
+	int eof;
+};
+
+static void *_exec_open(const char *path)
+{
+	int fds[2];
+	unsigned int i;
+	struct ExecData *data;
+
+	for (i = 0;; i++)
+		if (g_str_has_suffix(path, exec_programs[i].suffix))
+			break;
+
+	if (pipe(fds))
+		return NULL;
+
+	data = malloc(sizeof(struct ExecData));
+
+	if (!(data->child = fork())) {
+		close(fds[0]);
+		close(STDOUT_FILENO);
+
+		dup2(fds[1], STDOUT_FILENO);
+		close(fds[1]);
+
+		execlp(exec_programs[i].program,
+		       exec_programs[i].program,
+		       path,
+		       NULL);
+	}
+
+	close(fds[1]);
+	data->fd = fds[0];
+	data->eof = 0;
+
+	return data;
+}
+
+static void _exec_seek(void *data, unsigned int pos)
+{
+	struct ExecData *ex = data;
+	char buffer[BUFSIZE];
+	ssize_t r = 1;
+
+	while (pos && r)
+		pos -= (r = read(ex->fd, buffer, MIN(pos, sizeof(buffer))));
+}
+
+static int _exec_read(void *data, void *buf, size_t len)
+{
+	struct ExecData *ex = data;
+	int r;
+
+	ex->eof = !(r = read(ex->fd, buf, (int)len));
+
+	return r;
+}
+
+static int _exec_eof(void *data)
+{
+	struct ExecData *ex = data;
+
+	return ex->eof;
+}
+
+static int _exec_close(void *data)
+{
+	struct ExecData *ex = data;
+	int status;
+
+	if (!ex->eof)
+		kill(ex->child, SIGTERM);
+
+	close(ex->fd);
+	waitpid(ex->child, &status, 0);
+
+	free(data);
+
+	return 0;
+}
+
+static struct io_module modules[] = {
+	{ "", _exec_open, _exec_close, _exec_read, _exec_eof, _exec_seek },
+};
+
+#endif
+
 struct iofile
 {
-	char buffer[2048];
+	char buffer[BUFSIZE];
 	unsigned int buffer_used;
 	unsigned int buffer_consumed;
 	unsigned int module_idx;
@@ -243,6 +358,20 @@ char *io_getline(struct iofile *file)
 {
 	char *nl;
 
+	nl = memchr(file->buffer + file->buffer_consumed,
+		    '\n', file->buffer_used - file->buffer_consumed);
+	if (nl) {
+		char *rv = file->buffer + file->buffer_consumed;
+
+		*nl = '\0';
+		file->buffer_consumed += nl + 1 -
+			(file->buffer + file->buffer_consumed);
+
+		file->position += nl - file->buffer + 1;
+
+		return rv;
+	}
+
 	if (file->buffer_consumed) {
 		memmove(file->buffer, file->buffer + file->buffer_consumed,
 			file->buffer_used - file->buffer_consumed);
@@ -250,15 +379,6 @@ char *io_getline(struct iofile *file)
 		file->buffer_consumed = 0;
 	}
 
-	nl = memchr(file->buffer, '\n', file->buffer_used);
-	if (nl) {
-		*nl = '\0';
-		file->buffer_consumed = nl - file->buffer + 1;
-
-		file->position += nl - file->buffer + 1;
-
-		return file->buffer;
-	}
 
 	while (!modules[file->module_idx].eof(file->module_data) &&
 	       file->buffer_used < sizeof(file->buffer)) {

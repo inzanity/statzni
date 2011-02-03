@@ -12,6 +12,8 @@ void user_handle_line(struct user *user, const char *line)
 {
 	const char *i = line;
 	char p = '\0';
+	char exl = 0;
+	char que = 0;
 
 	++user->lines;
 	++user->chars;
@@ -26,12 +28,14 @@ void user_handle_line(struct user *user, const char *line)
 	while (*i) {
 		switch (*i) {
 		case '?':
-			if (p  != '?')
+			if (!que)
 				++user->questions;
+			que = 1;
 			break;
 		case '!':
-			if (p != '!')
+			if (!exl)
 				++user->exclamations;
+			exl = 1;
 			break;
 		case ' ':
 			if (p != ' ')
@@ -78,7 +82,8 @@ int main(int argc, char **argv)
 
 	settings = g_key_file_new();
 	g_key_file_load_from_file(settings, "conf.ini", 0, NULL);
-	users = users_new(settings);
+	users = users_new();
+	users_load(users, settings);
 	f = formatter_new(settings);
 	s = state_new(settings);
 	g_key_file_free(settings);
@@ -93,13 +98,15 @@ int main(int argc, char **argv)
 				struct user *user = users_get_user(
 						users,
 						details.nick);
-				times[details.time / 60]++;
-				user->timelines[details.time / 360]++;
+				times[(details.time & HOUR_MASK) >> HOUR_SHIFT]++;
+				user->timelines[((details.time & HOUR_MASK) >> HOUR_SHIFT) / 6]++;
 				user_handle_line(user, details.value);
 			}
 		}
 		io_close(file);
 	}
+
+	p->deinit(d);
 
 	state_save(s, users, times);
 
@@ -107,9 +114,12 @@ int main(int argc, char **argv)
 
 	result = users_get_all(users);
 	formatter_users(f, result);
+	formatter_trivia(f, result);
 	g_slist_free(result);
 
+	formatter_free(f);
 	free_users(users);
+	state_free(s);
 
 	return 0;
 }

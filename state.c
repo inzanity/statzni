@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "state.h"
+#include "user.h"
 
 struct state
 {
@@ -54,7 +55,7 @@ struct state *state_new(GKeyFile *settings)
 
 	state = malloc(sizeof(struct state));
 	state->state = g_key_file_new();
-	state->statefile  = statefile;
+	state->statefile = statefile;
 	g_key_file_load_from_file(state->state, statefile, 0, NULL);
 
 	return state;
@@ -188,4 +189,12 @@ void state_save(struct state *state, struct users *users, int times[24])
 			    data,
 			    len,
 			    NULL);
+	g_free(data);
+}
+
+void state_free(struct state *state)
+{
+	g_key_file_free(state->state);
+	g_free(state->statefile);
+	free(state);
 }

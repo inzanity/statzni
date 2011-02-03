@@ -94,3 +94,45 @@ void formatter_users(struct formatter *fmt, GSList *users)
 	}
 	fprintf(fmt->output, "</ol>");
 }
+
+void formatter_trivia(struct formatter *fmt, GSList *users)
+{
+	struct user *user;
+	if (!users)
+		return;
+
+	fprintf(fmt->output, "<ol id=\"trivia\">\n");
+
+	users = g_slist_sort_with_data(users, user_comparer,
+				       GINT_TO_POINTER(COMPARE_QUESTIONS |
+						       COMPARE_RELATIVE));
+	user = users->data;
+	fprintf(fmt->output, "<p>%s kyseli julmetusti, %.2f%% ajasta.</p>",
+		user->username, (gdouble)user->questions * 100 / user->lines);
+
+	users = g_slist_sort_with_data(users, user_comparer,
+				       GINT_TO_POINTER(COMPARE_EXCLAMATIONS |
+						       COMPARE_RELATIVE));
+	user = users->data;
+	fprintf(fmt->output,
+		"<p>%s huusi kuin viimeistä päivää, %.1f%% ajasta.</p>",
+		user->username,
+		(gdouble)user->exclamations * 100 / user->lines);
+
+	users = g_slist_sort_with_data(users, user_comparer,
+				       GINT_TO_POINTER(COMPARE_TSUP));
+	user = users->data;
+	fprintf(fmt->output,
+		"<p>%s *tsup*paili eniten, %u kertaa.</p>",
+		user->username,
+		user->tsup);
+
+	fprintf(fmt->output, "</div>");
+}
+
+void formatter_free(struct formatter *fmt)
+{
+	if (fmt->output != stdout)
+		fclose(fmt->output);
+	free(fmt);
+}

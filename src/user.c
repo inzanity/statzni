@@ -1,3 +1,6 @@
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 #include <glib.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,10 +53,10 @@ static void _regexify_strv(gchar **strv)
 	}
 }
 
-struct users *users_new()
+struct users *users_new(void)
 {
 	struct users *users = malloc(sizeof(struct users));
-#if USE_STRIDX
+#ifdef USE_STRIDX
 	users->cache = index_new();
 #else
 	users->cache = g_hash_table_new_full(g_str_hash,

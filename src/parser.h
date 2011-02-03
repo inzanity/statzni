@@ -27,7 +27,7 @@ struct action_details {
 };
 
 struct parser {
-	void *(*init)();
+	void *(*init)(void);
 	void (*parse_line)(void *data,
 			   struct action_details *details, char *line);
 	void (*deinit)(void *data);

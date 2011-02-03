@@ -6,7 +6,7 @@ struct IrssiParser {
 	unsigned int basetime;
 };
 
-static void *_irssi_init() {
+static void *_irssi_init(void) {
 	struct IrssiParser *data = malloc(sizeof(struct IrssiParser));
 	data->basetime = 0;
 

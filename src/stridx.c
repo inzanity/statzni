@@ -1,4 +1,10 @@
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 #include <stdlib.h>
+#include "stridx.h"
+
+#ifdef USE_STRIDX
 
 static inline unsigned char _idx(char a)
 {
@@ -82,3 +88,4 @@ void index_free(struct stridx *data)
 
 	free(data);
 }
+#endif

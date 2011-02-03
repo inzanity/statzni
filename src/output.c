@@ -31,7 +31,7 @@ struct formatter *formatter_new(GKeyFile *settings)
 	return fmt;
 }
 
-static char *classes[] = {
+static const char *classes[] = {
 	"night",
 	"morning",
 	"day",

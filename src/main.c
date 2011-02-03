@@ -8,7 +8,7 @@
 #include "output.h"
 #include "state.h"
 
-void user_handle_line(struct user *user, const char *line)
+static void user_handle_line(struct user *user, const char *line)
 {
 	const char *i = line;
 	char p = '\0';

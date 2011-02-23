@@ -80,8 +80,14 @@ int main(int argc, char **argv)
 	
 	srand(time(NULL));
 
+	if (argc < 3) {
+		fprintf(stderr, "Usage: %s <configuration file> <logfiles>\n",
+			argv[0]);
+		exit(1);
+	}
+
 	settings = g_key_file_new();
-	g_key_file_load_from_file(settings, "conf.ini", 0, NULL);
+	g_key_file_load_from_file(settings, argv[1], 0, NULL);
 	users = users_new();
 	users_load(users, settings);
 	f = formatter_new(settings);
@@ -90,7 +96,7 @@ int main(int argc, char **argv)
 
 	state_load(s, users, times);
 
-	for (i = 1; i < argc; i++) {
+	for (i = 2; i < argc; i++) {
 		struct iofile *file = io_open(argv[i]);
 		while ((line = io_getline(file))) {
 			p->parse_line(d, &details, line);
